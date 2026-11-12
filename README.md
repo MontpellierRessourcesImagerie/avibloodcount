@@ -39,6 +39,25 @@ Uncompressed TIFFs are read region by region straight from disk, so multi-gigaby
 
 Images are analyzed at the physical resolution the models were trained on (0.2525 um per pixel, i.e. 40x scans). Images stored at a different resolution are resampled automatically based on the physical pixel size stored in the file metadata (OME-TIFF `PhysicalSizeX` or the TIFF resolution tags), so that each tile always covers the same physical area as a training tile. The resampling factor is printed per file. Images without resolution metadata are analyzed at their native resolution; pass `--target-mpp <value>` to analyze at another resolution or `--target-mpp 0` to disable resampling entirely.
 
+### Visual QC with napari-simpleannotate
+In addition to the JSON counts, inference writes YOLO bounding box annotations next to the input images so the detections can be reviewed with [napari-simpleannotate](https://github.com/MontpellierRessourcesImagerie/napari-simpleannotate) (`Open Directory` on the image folder):
+
+- `<image_name>.txt` — one line per detected cell: `class_id x_center y_center width height`, normalized to 0-1 relative to the full image (the resampling is undone, so boxes align with the image as napari opens it). Written only for images that contain detections; files of previous runs without detections are removed.
+- `class.yaml` — the class list (`names:` mapping).
+- `colors.yaml` — the class to color mapping used by the plugin.
+
+| class_id | class | color |
+| --- | --- | --- |
+| 0 | Erythrocyte (with nucleus) | red |
+| 1 | Eosinophil | green |
+| 2 | Lymphocyte | blue |
+| 3 | Heterophil | cyan |
+| 4 | Erythrocyte (cell) with parasite | magenta |
+| 5 | Monocyte | yellow |
+| 6 | Basophil | black |
+
+Boxes cover the nuclei of the detected cells, as trained. Annotations are written for all detections above the detection threshold, including the parasite class, which is not part of the JSON counts. Note that existing `.txt`, `class.yaml` and `colors.yaml` files in the image folder are overwritten on every run, and that napari loads the complete image into memory. Pass `--no-yolo` to skip the annotation files.
+
 You can modify several parameters by passing them trailing the `docker run command`. For example, you can set the thresholds used for the countability classification and the instance segmentation models via `--cls_thresh` and `--det_thresh`, respectively. All available parameters can be listed by issuing 
 
 `docker run --rm -it -v /path/to/code:/code -v /path/to/data:/data --shm-size 8gb --name avibloodcount umr-ds/avibloodcount --help`

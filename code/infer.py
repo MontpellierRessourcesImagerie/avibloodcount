@@ -10,6 +10,55 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from svs_dataset import SvsDataset
 
+# Classes for the YOLO annotation files written next to the input images for
+# visual QC with napari-simpleannotate. Index = class_id - 1 as used by the
+# detector. The colors match the default palette of the plugin.
+YOLO_CLASSES = [
+    "Erythrocyte (with nucleus)",
+    "Eosinophil",
+    "Lymphocyte",
+    "Heterophil",
+    "Erythrocyte (cell) with parasite",
+    "Monocyte",
+    "Basophil",
+]
+YOLO_COLORS = ["red", "green", "blue", "cyan", "magenta", "yellow", "black"]
+
+
+def write_yolo_metadata(directory):
+    """Write class.yaml and colors.yaml for napari-simpleannotate."""
+    with open(os.path.join(directory, "class.yaml"), "w") as f:
+        f.write("names:\n")
+        for class_id, name in enumerate(YOLO_CLASSES):
+            f.write(f"  {class_id}: {name}\n")
+    with open(os.path.join(directory, "colors.yaml"), "w") as f:
+        for class_id, color in enumerate(YOLO_COLORS):
+            f.write(f"{class_id}: {color}\n")
+
+
+def yolo_lines(detections, tile, scale, image_width, image_height):
+    """Map detections of one tile to normalized YOLO lines of the full image.
+
+    The model sees tiles resampled to the training resolution, while the
+    annotation coordinates have to be relative to the original image that
+    napari opens, so the tile position and the boxes are converted back to
+    native image pixels first. Coordinates are clipped to the image like the
+    plugin does when it saves annotations.
+    """
+    left = tile["left"] * scale
+    top = tile["top"] * scale
+    lines = []
+    for x1, y1, x2, y2, class_id, _score in detections:
+        x_min = min(max((left + x1 * scale) / image_width, 0.0), 1.0)
+        x_max = min(max((left + x2 * scale) / image_width, 0.0), 1.0)
+        y_min = min(max((top + y1 * scale) / image_height, 0.0), 1.0)
+        y_max = min(max((top + y2 * scale) / image_height, 0.0), 1.0)
+        x_center = (x_min + x_max) / 2
+        y_center = (y_min + y_max) / 2
+        lines.append(f"{class_id - 1} {x_center:.6f} {y_center:.6f} "
+                     f"{x_max - x_min:.6f} {y_max - y_min:.6f}")
+    return lines
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -75,6 +124,14 @@ def parse_args():
         type=float
     )
     parser.add_argument(
+        '--no-yolo',
+        dest='write_yolo',
+        action='store_false',
+        help='Do not write YOLO annotation files (class.yaml, colors.yaml and '
+             '<image>.txt next to each input image) used for visual QC with '
+             'napari-simpleannotate.',
+    )
+    parser.add_argument(
         '--gpu',
         dest='gpu',
         help='GPU ID to be used or None for CPU-only inference.',
@@ -95,6 +152,8 @@ def main_loop(svs_files):
     target_mpp = args.target_mpp if args.target_mpp > 0 else None
 
     model = DetModel(cfg=args.cfg, gpu=args.gpu, model=args.det_model, thresh=args.det_thresh)
+    if args.write_yolo:
+        write_yolo_metadata(args.path)
     svs_loop = tqdm(svs_files, disable=not multi_file)
     svs_loop.set_description("Overall")
     for filename in svs_loop:
@@ -107,6 +166,7 @@ def main_loop(svs_files):
         elif target_mpp and dataset.mpp is None:
             print(f"Warning: {filename} does not declare a physical pixel size, "
                   f"no resampling applied.", flush=True)
+        annotations = []
         loader = DataLoader(dataset,
                             batch_size=8,
                             shuffle=False,
@@ -118,7 +178,11 @@ def main_loop(svs_files):
         for i, item in enumerate(tile_loop):
             if item:
                 images = [img['tile'][..., ::-1].squeeze(axis=0) for img in item]
-                model.predict(images)
+                detections = model.predict(images)
+                if args.write_yolo:
+                    for tile_detections, tile in zip(detections, item):
+                        annotations.extend(yolo_lines(tile_detections, tile, dataset.scale,
+                                                      dataset.img_width, dataset.img_height))
         counts = model.counts
         model.counts.update({'Overall tiles': len(dataset)})
         del counts[model.class_ids['5']]
@@ -126,6 +190,17 @@ def main_loop(svs_files):
         # print(time.strftime("%Hh%Mm%Ss", time.gmtime(loc_end - loc_start)))
         with open(os.path.join(args.output_dir, filename + ".txt"), 'w') as f:
             json.dump(counts, f)
+        if args.write_yolo:
+            # napari-simpleannotate expects <image_name>.txt next to the image.
+            annotation_file = os.path.splitext(filename)[0] + ".txt"
+            annotation_path = os.path.join(args.path, annotation_file)
+            if annotations:
+                with open(annotation_path, "w") as f:
+                    f.write("\n".join(annotations) + "\n")
+            elif os.path.exists(annotation_path):
+                # No detections in this run: drop a stale file of an older run.
+                os.remove(annotation_path)
+            print(f"{filename}: {len(annotations)} annotated cells -> {annotation_file}", flush=True)
         model.reset_counter()
 
 

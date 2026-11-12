@@ -49,17 +49,27 @@ class DetModel:
         self.counts.update({"Countable tiles": 0})
 
     def predict(self, images):
+        """Run detection, update the class counters and return the detections.
+
+        Returns one list per input image containing the counted instances as
+        ``(x1, y1, x2, y2, class_id, score)`` in tile pixel coordinates
+        (class_id is 1-based, as in ``class_ids``).
+        """
         outputs = self.predictor(images)
+        detections = [[] for _ in images]
         if not outputs:
-            return None
-        for output in outputs:
+            return detections
+        for image_idx, output in enumerate(outputs):
             instances = output["instances"]
             for i, box in enumerate(instances.pred_boxes):
                 score = instances.scores.to("cpu").numpy()[i]
                 pred = instances.pred_classes.to("cpu").numpy()[i]
                 if int(pred) + 1 in range(1, 8) and float(score) >= self.thresh:
                     self.counts[self.class_ids[str(int(pred) + 1)]] += 1
+                    x1, y1, x2, y2 = (float(value) for value in box)
+                    detections[image_idx].append((x1, y1, x2, y2, int(pred) + 1, float(score)))
             self.counts['Countable tiles'] += 1
+        return detections
 
     def reset_counter(self):
         self.counts = {v: 0 for v in self.class_ids.values()}
