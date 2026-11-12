@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument(
         '--path',
         dest='path',
-        help='A directory or a single SVS file.',
+        help='A directory or a single SVS or TIFF file.',
         default='/data/input/',
         type=str,
     )
@@ -65,6 +65,16 @@ def parse_args():
         type=float
     )
     parser.add_argument(
+        '--target-mpp',
+        dest='target_mpp',
+        help='Physical pixel size in micrometers the models were trained on (40x '
+             'scans of the training slides). Images with a different resolution '
+             'are resampled accordingly, using the physical size stored in the '
+             'file metadata. Use 0 to disable resampling.',
+        default=0.2525,
+        type=float
+    )
+    parser.add_argument(
         '--gpu',
         dest='gpu',
         help='GPU ID to be used or None for CPU-only inference.',
@@ -82,13 +92,21 @@ def main_loop(svs_files):
     os.makedirs(args.output_dir, exist_ok=True)
 
     multi_file = len(svs_files) > 1
+    target_mpp = args.target_mpp if args.target_mpp > 0 else None
 
     model = DetModel(cfg=args.cfg, gpu=args.gpu, model=args.det_model, thresh=args.det_thresh)
     svs_loop = tqdm(svs_files, disable=not multi_file)
     svs_loop.set_description("Overall")
     for filename in svs_loop:
         # loc_start = time.time()
-        dataset = SvsDataset(os.path.join(args.path, filename), args.cls_model, args.cls_thresh)
+        dataset = SvsDataset(os.path.join(args.path, filename), args.cls_model, args.cls_thresh,
+                             target_mpp=target_mpp)
+        if dataset.scale != 1.0:
+            print(f"{filename}: {dataset.mpp:g} um/px -> resampled x{dataset.scale:.3f} to "
+                  f"{target_mpp:g} um/px ({len(dataset)} tiles)", flush=True)
+        elif target_mpp and dataset.mpp is None:
+            print(f"Warning: {filename} does not declare a physical pixel size, "
+                  f"no resampling applied.", flush=True)
         loader = DataLoader(dataset,
                             batch_size=8,
                             shuffle=False,
@@ -106,22 +124,25 @@ def main_loop(svs_files):
         del counts[model.class_ids['5']]
         # loc_end = time.time()
         # print(time.strftime("%Hh%Mm%Ss", time.gmtime(loc_end - loc_start)))
-        with open(args.output_dir + filename + ".txt", 'w') as f:
+        with open(os.path.join(args.output_dir, filename + ".txt"), 'w') as f:
             json.dump(counts, f)
         model.reset_counter()
 
 
 def get_input_files(path):
     if os.path.isfile(path):
-        if path.endswith((".svs", ".SVS")):
-            svs_files = [path]
+        if path.endswith((".svs", ".SVS", ".tif", ".tiff", ".TIF", ".TIFF")):
+            # Normalize to directory + file name: main_loop joins both and
+            # writes the result file next to the image otherwise.
+            args.path = os.path.dirname(os.path.abspath(path))
+            svs_files = [os.path.basename(path)]
         else:
-            raise argparse.ArgumentTypeError(f"Expecting input files to be in SVS file format! Found "
+            raise argparse.ArgumentTypeError(f"Expecting input files to be in SVS, TIFF file format! Found "
                                              f"'{os.path.splitext(path)[-1]}'.")
     elif os.path.isdir(path):
-        svs_files = [item for item in os.listdir(path) if item.endswith((".svs", ".SVS"))]
+        svs_files = [item for item in os.listdir(path) if item.endswith((".svs", ".SVS", ".tif", ".tiff", ".TIF", ".TIFF"))]
         if not svs_files:
-            print(f"Warning: Directory {path} does not contain any SVS file!")
+            print(f"Warning: Directory {path} does not contain any SVS or TIFF file!")
             return
     else:
         raise FileNotFoundError

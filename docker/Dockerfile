@@ -38,13 +38,18 @@ ENV FORCE_CUDA="1"
 ARG TORCH_CUDA_ARCH_LIST="Kepler;Kepler+Tesla;Maxwell;Maxwell+Tegra;Pascal;Volta;Ampere;Turing"
 ENV TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}"
 
-RUN pip install -e detectron2_repo
+# --no-build-isolation: detectron2's setup.py imports torch at build time, so it must
+# see the torch installed in this environment instead of a fresh isolated build env.
+# Regular (non-editable) install: setuptools==59.5.0 predates PEP 660 and has no
+# 'build_editable' hook, which pip requires for "-e" installs.
+RUN pip install --no-build-isolation ./detectron2_repo
 
 RUN git clone https://github.com/aim-uofa/AdelaiDet.git adet
 RUN sed -i 's/Pillow>=6.0/Pillow<10.0/' adet/setup.py
 COPY ml_nms.cu /home/appuser/adet/adet/layers/csrc/ml_nms/ml_nms.cu
 RUN pip install "numpy<2.0.0" "Pillow<10.0.0"
-RUN pip install -e adet
+# --no-build-isolation: AdelaiDet's setup.py also imports torch at build time.
+RUN pip install --no-build-isolation ./adet
 
 RUN pip install openslide-python onnxruntime-gpu==1.12
 

@@ -4,7 +4,7 @@ This software enables fully automated counting of blood cells, including erythro
 We provide our models and annotated data at [data.uni-marburg.de](https://data.uni-marburg.de/handle/dataumr/250).
 
 ## Installation
-We provide a docker file to create an environment containing all dependencies necessary to run our model on whole slide images stored in the SVS file format.
+We provide a docker file to create an environment containing all dependencies necessary to run our model on whole slide images stored in the SVS or TIFF file format.
 
 ### Install Docker
 To install Docker, follow the instructions at [docker.com](https://www.docker.com/get-started/)
@@ -17,10 +17,10 @@ To build the docker image go to the `docker` directory and run the following com
 ## Usage
 ### Preparation
 1. Download our trained models, i.e., `efficientNet_B0.onnx` and `condInst_R101.pth` from [here](https://data.uni-marburg.de/handle/dataumr/250) to `./models`. 
-2. Place the SVS files to be processed in `./input`. We provide several example [SVS files](https://dshare.mathematik.uni-marburg.de/index.php/s/if5Y2KmSAX5rMLG).
+2. Place the SVS or TIFF files to be processed in `./input`. We provide several example [SVS files](https://dshare.mathematik.uni-marburg.de/index.php/s/if5Y2KmSAX5rMLG).
 
 ### Run inference
-Running the Docker image as follows automatically starts inference with default parameters on all SVS files located at `./data`:
+Running the Docker image as follows automatically starts inference with default parameters on all SVS or TIFF files located at `./data`:
 
 `docker run --rm -it -v /path/to/code:/code -v /path/to/data:/data --shm-size 8gb --name avibloodcount umr-ds/avibloodcount`
 
@@ -29,6 +29,15 @@ To run with GPU support, do the following:
 `docker run --rm -it -v /path/to/code:/code -v /path/to/data:/data --shm-size 8gb --name avibloodcount --gpus 1 umr-ds/avibloodcount --gpu 0`
 
 In this example, the code will run on GPU with index 0.
+
+### Processing TIFF images
+Both SVS and TIFF (`.tif`/`.tiff`) files are supported. To process images that do not live in `./input`, pass their directory via `--path`:
+
+`docker run --rm -it -v /path/to/code:/code -v /path/to/data:/data --shm-size 8gb --name avibloodcount umr-ds/avibloodcount --path /data/images`
+
+Uncompressed TIFFs are read region by region straight from disk, so multi-gigabyte whole slide images are processed without loading them into memory.
+
+Images are analyzed at the physical resolution the models were trained on (0.2525 um per pixel, i.e. 40x scans). Images stored at a different resolution are resampled automatically based on the physical pixel size stored in the file metadata (OME-TIFF `PhysicalSizeX` or the TIFF resolution tags), so that each tile always covers the same physical area as a training tile. The resampling factor is printed per file. Images without resolution metadata are analyzed at their native resolution; pass `--target-mpp <value>` to analyze at another resolution or `--target-mpp 0` to disable resampling entirely.
 
 You can modify several parameters by passing them trailing the `docker run command`. For example, you can set the thresholds used for the countability classification and the instance segmentation models via `--cls_thresh` and `--det_thresh`, respectively. All available parameters can be listed by issuing 
 

@@ -4,3 +4,6 @@ __pycache__/
 *.onnx
 *.pth
 *.svs
+lit/
+images/
+output/
