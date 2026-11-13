@@ -398,10 +398,16 @@ class SvsDataset(Dataset):
             # native region per tile.
             self.scale = target_mpp / mpp
 
-        effective_width = self.img_width / self.scale
-        effective_height = self.img_height / self.scale
-        self.n_horizontal_tiles = int(effective_width) // self.TILE_WIDTH
-        self.n_vertical_tiles = int(effective_height) // self.TILE_HEIGHT
+        # Tile grid, expressed in the resampled (training scale) coordinate
+        # system. The tile counts are rounded *up* so that the whole image is
+        # covered: with floor division the leftover strip right of / below the
+        # last full tile was never visited, which dropped up to ~28% of these
+        # TIFFs (one tile spans 4371 native px after the 8.5x resample). The
+        # last column and row are clamped to the image border in __getitem__.
+        self.effective_width = int(self.img_width / self.scale)
+        self.effective_height = int(self.img_height / self.scale)
+        self.n_horizontal_tiles = -(-self.effective_width // self.TILE_WIDTH)
+        self.n_vertical_tiles = -(-self.effective_height // self.TILE_HEIGHT)
         self.sess = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
 
     # Length of the Dataset
@@ -425,11 +431,37 @@ class SvsDataset(Dataset):
             self._pil_pid = os.getpid()
         return self.pil_image
 
+    @classmethod
+    def _tile_origin(cls, index, tile_size, extent):
+        """Start of tile ``index`` along one axis.
+
+        The last tile is shifted back so that it ends exactly at the image
+        border instead of running past it, i.e. it overlaps its neighbour
+        instead of leaving an unanalysed strip.
+        """
+        return min(index * tile_size, max(extent - tile_size, 0))
+
+    def tile_origins(self):
+        """Start positions of all tiles along x and y (resampled pixels).
+
+        infer.py uses them to recognise the boxes of a cell that a tile
+        border cut in half: each half ends exactly on an edge of the tile it
+        came from, and those edges are derived from these origins.
+        """
+        x = [self._tile_origin(i, self.TILE_WIDTH, self.effective_width)
+             for i in range(self.n_horizontal_tiles)]
+        y = [self._tile_origin(i, self.TILE_HEIGHT, self.effective_height)
+             for i in range(self.n_vertical_tiles)]
+        return x, y
+
     # Fetch an item from the Dataset
     def __getitem__(self, idx):
         vert_pos, horiz_pos = divmod(idx, self.n_horizontal_tiles)
         # Tile position in the resampled (training scale) coordinate system.
-        top, left = vert_pos * self.TILE_HEIGHT, horiz_pos * self.TILE_WIDTH
+        # The last column and row end at the image border, so they overlap
+        # their neighbour; infer.py merges the detections of both.
+        left = self._tile_origin(horiz_pos, self.TILE_WIDTH, self.effective_width)
+        top = self._tile_origin(vert_pos, self.TILE_HEIGHT, self.effective_height)
 
         if self.scale == 1.0:
             native_left, native_top = left, top

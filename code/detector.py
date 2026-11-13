@@ -49,9 +49,15 @@ class DetModel:
         self.counts.update({"Countable tiles": 0})
 
     def predict(self, images):
-        """Run detection, update the class counters and return the detections.
+        """Run detection and return the detections.
 
-        Returns one list per input image containing the counted instances as
+        The instances are *not* counted here: tiles overlap at the image
+        border and would return the same cell twice. Counting happens once
+        per cell in infer.py, after the detections of all tiles have been
+        merged; only the countable tiles are visited at all (their number is
+        tallied here).
+
+        Returns one list per input image containing the detected instances as
         ``(x1, y1, x2, y2, class_id, score)`` in tile pixel coordinates
         (class_id is 1-based, as in ``class_ids``).
         """
@@ -65,7 +71,6 @@ class DetModel:
                 score = instances.scores.to("cpu").numpy()[i]
                 pred = instances.pred_classes.to("cpu").numpy()[i]
                 if int(pred) + 1 in range(1, 8) and float(score) >= self.thresh:
-                    self.counts[self.class_ids[str(int(pred) + 1)]] += 1
                     x1, y1, x2, y2 = (float(value) for value in box)
                     detections[image_idx].append((x1, y1, x2, y2, int(pred) + 1, float(score)))
             self.counts['Countable tiles'] += 1

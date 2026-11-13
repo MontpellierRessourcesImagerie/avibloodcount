@@ -39,6 +39,8 @@ Uncompressed TIFFs are read region by region straight from disk, so multi-gigaby
 
 Images are analyzed at the physical resolution the models were trained on (0.2525 um per pixel, i.e. 40x scans). Images stored at a different resolution are resampled automatically based on the physical pixel size stored in the file metadata (OME-TIFF `PhysicalSizeX` or the TIFF resolution tags), so that each tile always covers the same physical area as a training tile. The resampling factor is printed per file. Images without resolution metadata are analyzed at their native resolution; pass `--target-mpp <value>` to analyze at another resolution or `--target-mpp 0` to disable resampling entirely.
 
+The whole image is covered: the tile grid is rounded up instead of down, and the last column and row are shifted to the image border, so no strip along the right or bottom edge is skipped. Because tiles overlap and a tile border cuts every cell straddling it in half, a cell can be detected by two tiles — as two overlapping views, as the two halves of a split cell whose boxes end exactly on the tile border, or as a whole-cell view next to a clipped half. These are merged into one detection (keeping the view in which the cell lies closest to the tile centre), so no cell is counted twice while a cell that only one tile detected is still counted, and two genuinely different cells side by side are never merged.
+
 ### Visual QC with napari-simpleannotate
 In addition to the JSON counts, inference writes YOLO bounding box annotations next to the input images so the detections can be reviewed with [napari-simpleannotate](https://github.com/MontpellierRessourcesImagerie/napari-simpleannotate) (`Open Directory` on the image folder):
 
